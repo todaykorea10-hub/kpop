@@ -1,0 +1,46 @@
+name: K-POP Blog Auto Poster
+
+on:
+  schedule:
+    # 한국시간(KST) 오전 9시 ~ 오후 3시에만 40분마다 실행됩니다.
+    # GitHub Actions의 cron은 UTC 기준이며, KST는 UTC+9시간입니다.
+    # 즉 KST 09:00~15:00 = UTC 00:00~06:00 입니다.
+    # 크론 형식: 분 시 일 월 요일
+    - cron: '*/40 0-5 * * *'
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    # 깃허브 저장소의 Actions 탭에서 "Run workflow" 버튼으로 수동 실행도 가능하게 합니다.
+
+# posted_links.json 등 변경 파일을 저장소에 다시 커밋하기 위해 쓰기 권한이 필요합니다.
+permissions:
+  contents: write
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: 파이썬 설치
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 패키지 설치
+        run: pip install -r requirements.txt
+
+      - name: K-POP 블로그 자동 게시 실행
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          BLOG_ID: ${{ secrets.BLOG_ID }}
+          GOOGLE_TOKEN_JSON: ${{ secrets.GOOGLE_TOKEN_JSON }}
+        run: python blogger_auto_github.py
+
+      - name: 중복 방지 기록 파일 커밋
+        run: |
+          git config user.name "kpop-auto-bot"
+          git config user.email "actions@github.com"
+          git add posted_links.json posted_titles.json 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "chore: update posted links/titles [skip ci]"
+          git push
