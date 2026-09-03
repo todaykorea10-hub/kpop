@@ -40,7 +40,7 @@ ALL_KEYWORDS = BASE_ARTIST_KEYWORDS + TRENDING_KEYWORDS
 
 # 다음뉴스, 네이버뉴스, 구글뉴스(전체) 세 곳에서 각 키워드를 검색합니다.
 # 구글 뉴스의 "when:Nd" 연산자로 최근 N일 이내 기사만 검색되도록 제한합니다.
-RECENCY_DAYS = 5
+RECENCY_DAYS = 1
 RECENCY_FILTER = f"when:{RECENCY_DAYS}d"
 
 SEARCH_KEYWORDS = []
