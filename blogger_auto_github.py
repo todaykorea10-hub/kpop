@@ -52,9 +52,10 @@ for _kw in ALL_KEYWORDS:
     SEARCH_KEYWORDS.append(f"{_kw} {RECENCY_FILTER}")                      # 구글 뉴스 전체 (매체 제한 없음)
 
 # 실행 1회당 최대 게시 개수
-# [깃허브 액션용 수정] cron 스케줄 자체가 실행 간격을 담당하므로, 1회 실행당 1개만 게시하도록 낮췄습니다.
-# (워크플로에서 예: 매 40분마다 실행하도록 설정하면, 결과적으로 K-POP 스크립트와 비슷한 게시 빈도가 됩니다.)
-MAX_POSTS_PER_RUN = 1
+# [수정] 하루 1번만 실행되고, 그 안에서 6시간(340분, 여유를 두고 setup 등을 감안해 20분 뺌)에
+# 걸쳐 40개를 천천히 나눠서 게시합니다. GitHub Actions 1회 실행 최대 시간(6시간=360분) 이내로 맞췄습니다.
+MAX_POSTS_PER_RUN = 40
+SPREAD_MINUTES = 340
 
 # 이번 실행에서 게시할 글들을 이 시간(분) 안에 나눠서 올립니다 (한꺼번에 몰아 올리지 않도록)
 SPREAD_MINUTES = 120
@@ -455,9 +456,14 @@ def run_job():
                 success_count += 1
                 print(f"   📊 이번 실행 누적 게시: {success_count}/{MAX_POSTS_PER_RUN}")
 
-                # [깃허브 액션용 수정] Actions 실행 시간(과금)을 아끼기 위해 게시 사이 대기(sleep)를 생략합니다.
-                # MAX_POSTS_PER_RUN을 1보다 크게 늘리면 여러 개가 한 번에 몰아서 게시되니,
-                # 여러 개를 원하면 늘리는 대신 cron 실행 주기를 촘촘히 하는 쪽을 권장합니다.
+                # [수정] 하루 1회 실행 안에서 6시간에 걸쳐 천천히 나눠 게시하도록,
+                # 목표 개수에 아직 도달하지 않았고 더 게시할 후보가 남아있다면 다음 게시까지 대기합니다.
+                if success_count < MAX_POSTS_PER_RUN:
+                    base_interval = SPREAD_MINUTES / MAX_POSTS_PER_RUN
+                    wait_minutes = random.uniform(base_interval * 0.7, base_interval * 1.3)
+                    next_post_time = time.strftime('%H:%M:%S', time.localtime(time.time() + wait_minutes * 60))
+                    print(f"   ⏳ 다음 게시까지 약 {wait_minutes:.1f}분 대기합니다. (예상 시각: {next_post_time})")
+                    time.sleep(wait_minutes * 60)
         else:
             # 생성 자체가 실패한 링크도 다음에 또 시도하지 않도록 기록
             save_posted_link(news['link'])
