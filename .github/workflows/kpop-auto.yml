@@ -2,12 +2,10 @@ name: K-POP Blog Auto Poster
 
 on:
   schedule:
-    # 한국시간(KST) 오전 9시 ~ 오후 3시에만 40분마다 실행됩니다.
-    # GitHub Actions의 cron은 UTC 기준이며, KST는 UTC+9시간입니다.
-    # 즉 KST 09:00~15:00 = UTC 00:00~06:00 입니다.
-    # 크론 형식: 분 시 일 월 요일
-    - cron: '*/40 0-5 * * *'
-    - cron: '0 6 * * *'
+    # 하루 1번, 한국시간(KST) 오전 9시에 실행됩니다.
+    # GitHub Actions의 cron은 UTC 기준이며, KST는 UTC+9시간이므로 KST 09:00 = UTC 00:00 입니다.
+    # 이 1번의 실행 안에서 스크립트가 스스로 6시간에 걸쳐 40개를 나눠 게시합니다.
+    - cron: '0 0 * * *'
   workflow_dispatch:
     # 깃허브 저장소의 Actions 탭에서 "Run workflow" 버튼으로 수동 실행도 가능하게 합니다.
 
@@ -18,6 +16,8 @@ permissions:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    # 6시간에 걸쳐 게시하는 구조라 GitHub 최대 허용 시간(6시간=360분)에 맞춰 넉넉히 잡습니다.
+    timeout-minutes: 355
     steps:
       - name: 저장소 체크아웃
         uses: actions/checkout@v4
