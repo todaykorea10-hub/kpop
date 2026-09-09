@@ -56,7 +56,7 @@ MAX_POSTS_PER_RUN = 50
 SPREAD_MINUTES = 340
 
 # 이번 실행에서 게시할 글들을 이 시간(분) 안에 나눠서 올립니다 (한꺼번에 몰아 올리지 않도록)
-SPREAD_MINUTES = 120
+SPREAD_MINUTES = 300
 
 # 한 번 처리(게시했든, 중복이라 스킵했든)한 뉴스 링크를 영구히 기록해두는 파일.
 POSTED_LINKS_FILE = 'posted_links.json'
@@ -68,8 +68,8 @@ POSTED_TITLES_FILE = 'posted_titles.json'
 SIMILARITY_THRESHOLD = 0.65
 
 # 다음 실행까지 대기할 시간 범위 (분 단위, 이 사이에서 매번 무작위로 결정)
-MIN_INTERVAL_MINUTES = 20
-MAX_INTERVAL_MINUTES = 70
+MIN_INTERVAL_MINUTES = 5
+MAX_INTERVAL_MINUTES = 20
 # =================================================
 
 SCOPES = ['https://www.googleapis.com/auth/blogger']
