@@ -7,6 +7,8 @@ import requests
 import json
 import re
 import difflib
+import threading
+import queue
 from bs4 import BeautifulSoup
 from google import genai
 from google.auth.transport.requests import Request
@@ -324,10 +326,36 @@ def generate_blog_content(news_title, news_link):
         }}
         """
 
-        response = client.models.generate_content(
-            model='gemini-3.1-flash-lite',
-            contents=prompt,
-        )
+        # [수정] genai 클라이언트 호출 자체에 타임아웃이 없어서, 네트워크 문제 등으로 응답이
+        # 안 오면 스크립트가 그 자리에서 영원히 멈추고(로그도 더 안 찍힘) 결국 GitHub Actions의
+        # 전체 job 타임아웃에 걸려 "Error: The operation was canceled." 로 끝나는 문제가 있었다.
+        # 개별 호출에 90초 제한을 걸어서, 응답이 없으면 이 기사만 건너뛰고 다음 기사로 넘어가게 한다.
+        # (주의) concurrent.futures.ThreadPoolExecutor는 프로그램 종료 시(atexit) 멈춰있는
+        # 스레드까지 계속 기다리기 때문에, 타임아웃을 걸어도 스크립트 종료 시점에 다시 멈출 수 있다.
+        # 그래서 daemon=True 스레드를 직접 써서, 응답이 안 와도 메인 로직과 프로그램 종료를
+        # 절대 막지 않도록 한다.
+        result_q = queue.Queue()
+
+        def _call_gemini():
+            try:
+                result_q.put(("ok", client.models.generate_content(
+                    model='gemini-3.1-flash-lite',
+                    contents=prompt,
+                )))
+            except Exception as inner_e:
+                result_q.put(("error", inner_e))
+
+        worker = threading.Thread(target=_call_gemini, daemon=True)
+        worker.start()
+        try:
+            status, payload = result_q.get(timeout=90)
+        except queue.Empty:
+            print("   ⏱️ Gemini 응답이 90초 안에 오지 않아 이 기사는 건너뜁니다.")
+            return None, None
+
+        if status == "error":
+            raise payload
+        response = payload
 
         raw_text = response.text
         json_match = re.search(r'(\{.*\})', raw_text, re.DOTALL)
