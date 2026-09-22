@@ -1,4 +1,19 @@
 import os
+import sys
+
+# [수정] 파이썬은 터미널이 아닌 곳(GitHub Actions 로그 등)으로 출력할 때 기본적으로
+# 한 줄씩 바로 안 보내고 버퍼에 모았다가 한꺼번에 내보낸다(블록 버퍼링). 그래서 스크립트는
+# 실제로 계속 실행 중인데도 로그 화면에는 예전 print() 줄에서 멈춘 것처럼 보이는 경우가 많다.
+# (게다가 GitHub Actions가 타임아웃으로 프로세스를 강제 종료하면, 버퍼에 쌓여있던 아직
+# 화면에 안 나간 출력은 그대로 유실된다.) 줄 단위 버퍼링으로 강제해서 print()가 호출되는
+# 즉시 로그에 바로 나오도록 한다 — 워크플로우 yml에서 PYTHONUNBUFFERED=1을 설정하지 않아도
+# 항상 적용되도록 스크립트 자체에서 처리한다.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
 import time
 import random
 import xml.etree.ElementTree as ET
@@ -23,7 +38,12 @@ from googlenewsdecoder import gnewsdecoder  # pip install googlenewsdecoder
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 BLOG_ID = os.environ["BLOG_ID"]
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    # [수정] 구글 뉴스 RSS가 헤더가 너무 단순한(User-Agent만 있는) 요청을 자동화 트래픽으로
+    # 판단해서 503을 주는 경우가 있어, 실제 브라우저에 가깝게 헤더를 보강합니다.
+    'Accept': 'application/rss+xml, application/xml;q=0.9, text/html;q=0.8, */*;q=0.7',
+    'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Referer': 'https://news.google.com/',
 }
 
 # 네이버/다음/구글뉴스 전체에서 K-POP 관련 화제 기사를 폭넓게 검색합니다.
@@ -266,32 +286,58 @@ def get_latest_news_list(keywords=None, count_per_keyword=15):
 
     seen_links = set()
     news_list = []
+    consecutive_failures = 0
+    # [수정] 구글 뉴스가 이 실행 자체를 막고 있는 상태(IP 단위 일시 차단 등)라면, 남은 수십 개
+    # 키워드를 전부 순서대로 실패하며 시간을 낭비할 필요가 없습니다. 연속 실패가 너무 많으면
+    # 일찍 중단하고, 다음 예약 실행 때 다시 시도하도록 합니다.
+    MAX_CONSECUTIVE_FAILURES = 12
 
     for i, keyword in enumerate(keywords):
         print(f"🔎 Searching news list for '{keyword}'...")
         encoded_keyword = urllib.parse.quote(keyword)
         url = f"https://news.google.com/rss/search?q={encoded_keyword}&hl=ko&gl=KR&ceid=KR:ko"
 
-        try:
-            response = requests.get(url, timeout=10, headers=HEADERS)
-            if response.status_code != 200:
-                print(f"❌ Failed to fetch news data for '{keyword}'. (상태 코드 {response.status_code})")
-                continue
+        # [수정] 503/429는 일시적인 경우가 많아, 포기하기 전에 짧은 대기 후 한 번 더 시도합니다.
+        response = None
+        for attempt in range(2):
+            try:
+                response = requests.get(url, timeout=10, headers=HEADERS)
+                if response.status_code == 200:
+                    break
+                if attempt == 0 and response.status_code in (503, 429):
+                    time.sleep(random.uniform(4, 7))
+            except Exception as e:
+                print(f"⚠️ '{keyword}' 검색 중 오류: {e}")
+                response = None
+                break
 
-            root = ET.fromstring(response.content)
-            items = root.findall('.//item')
-            if not items:
-                print(f"   ↪️ 이 검색어는 0개 반환됨 (일시적일 수 있음)")
-            for item in items[:count_per_keyword]:
-                title = item.find('title').text
-                link = item.find('link').text
-                if link in seen_links:
-                    continue
-                seen_links.add(link)
-                news_list.append({"title": title, "link": link})
-        except Exception as e:
-            print(f"⚠️ '{keyword}' 검색 중 오류: {e}")
-            continue
+        if response is None:
+            consecutive_failures += 1
+        elif response.status_code != 200:
+            print(f"❌ Failed to fetch news data for '{keyword}'. (상태 코드 {response.status_code})")
+            consecutive_failures += 1
+        else:
+            consecutive_failures = 0
+            try:
+                root = ET.fromstring(response.content)
+                items = root.findall('.//item')
+                if not items:
+                    print(f"   ↪️ 이 검색어는 0개 반환됨 (일시적일 수 있음)")
+                for item in items[:count_per_keyword]:
+                    title = item.find('title').text
+                    link = item.find('link').text
+                    if link in seen_links:
+                        continue
+                    seen_links.add(link)
+                    news_list.append({"title": title, "link": link})
+            except Exception as e:
+                print(f"⚠️ '{keyword}' 응답 파싱 중 오류: {e}")
+
+        if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+            print(f"\n🛑 '{keyword}' 포함 최근 {consecutive_failures}개 검색이 연속으로 실패했습니다.")
+            print("   구글 뉴스가 이번 실행의 요청을 일시적으로 막고 있는 것으로 보여, 남은 키워드 검색을 중단합니다.")
+            print("   (다음 예약 실행 때 다시 시도합니다.)")
+            break
 
         # 연속 요청 사이에 짧은 딜레이를 둬서 구글 뉴스의 일시적 빈 응답(soft rate-limit)을 방지합니다.
         if i < len(keywords) - 1:
