@@ -386,28 +386,51 @@ def generate_blog_content(news_title, news_link):
         # 스레드까지 계속 기다리기 때문에, 타임아웃을 걸어도 스크립트 종료 시점에 다시 멈출 수 있다.
         # 그래서 daemon=True 스레드를 직접 써서, 응답이 안 와도 메인 로직과 프로그램 종료를
         # 절대 막지 않도록 한다.
-        result_q = queue.Queue()
+        def _call_gemini_once():
+            result_q = queue.Queue()
 
-        def _call_gemini():
+            def _call_gemini():
+                try:
+                    result_q.put(("ok", client.models.generate_content(
+                        model='gemini-3.1-flash-lite',
+                        contents=prompt,
+                    )))
+                except Exception as inner_e:
+                    result_q.put(("error", inner_e))
+
+            worker = threading.Thread(target=_call_gemini, daemon=True)
+            worker.start()
             try:
-                result_q.put(("ok", client.models.generate_content(
-                    model='gemini-3.1-flash-lite',
-                    contents=prompt,
-                )))
-            except Exception as inner_e:
-                result_q.put(("error", inner_e))
+                status, payload = result_q.get(timeout=90)
+            except queue.Empty:
+                print("   ⏱️ Gemini 응답이 90초 안에 오지 않아 이 기사는 건너뜁니다.")
+                return None
 
-        worker = threading.Thread(target=_call_gemini, daemon=True)
-        worker.start()
-        try:
-            status, payload = result_q.get(timeout=90)
-        except queue.Empty:
-            print("   ⏱️ Gemini 응답이 90초 안에 오지 않아 이 기사는 건너뜁니다.")
+            if status == "error":
+                raise payload
+            return payload
+
+        # [수정] "503 UNAVAILABLE / high demand"는 Gemini 서버가 일시적으로 과부하일 때
+        # 나는 오류라, 짧게 대기 후 재시도하면 성공하는 경우가 많다. 이 오류일 때만 최대
+        # 2번까지 재시도하고(5초, 10초 대기), 그 외 오류는 예전처럼 바로 포기하고 다음
+        # 기사로 넘어간다 (원인이 다른 오류까지 재시도하면 후보 하나에 시간을 너무 씀).
+        response = None
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            try:
+                response = _call_gemini_once()
+                break
+            except Exception as gen_e:
+                is_overloaded = "503" in str(gen_e) or "UNAVAILABLE" in str(gen_e)
+                if is_overloaded and attempt < max_attempts:
+                    wait_s = 5 * attempt
+                    print(f"   ⏳ Gemini 서버 과부하(503) - {wait_s}초 후 재시도 ({attempt}/{max_attempts - 1})")
+                    time.sleep(wait_s)
+                    continue
+                raise
+
+        if response is None:
             return None, None
-
-        if status == "error":
-            raise payload
-        response = payload
 
         raw_text = response.text
         json_match = re.search(r'(\{.*\})', raw_text, re.DOTALL)
