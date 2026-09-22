@@ -179,8 +179,14 @@ def resolve_google_news_link(google_news_link):
     decoded = google_news_link
     try:
         result = gnewsdecoder(google_news_link, interval=1)
-        if result.get("status") and result.get("decoded_url"):
+        # [수정-핵심] 설치된 googlenewsdecoder 버전은 성공 여부를 "status"가 아니라 "success"
+        # 키로 돌려준다. "status"만 읽고 있었기 때문에 디코딩이 실제로는 성공했어도 항상
+        # 실패로 취급되어, 거의 모든 기사에서 이미지 추출을 건너뛰고 있었다. 두 키 다 확인한다.
+        ok = result.get("success", result.get("status"))
+        if ok and result.get("decoded_url"):
             decoded = result["decoded_url"]
+        elif not ok:
+            print(f"   ↪️ 링크 디코딩 실패: {result.get('message', result)}")
     except Exception as e:
         print(f"⚠️ 원본 링크 디코딩 중 문제 발생: {e}")
 
