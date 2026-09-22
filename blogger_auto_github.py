@@ -154,14 +154,27 @@ def is_already_posted(service, title):
 
 # 구글 뉴스 리다이렉트는 base64로 인코딩된 값을 별도 API로 디코딩해야 실제 원문 링크가 나옵니다.
 def resolve_google_news_link(google_news_link):
+    decoded = google_news_link
     try:
         result = gnewsdecoder(google_news_link, interval=1)
         if result.get("status") and result.get("decoded_url"):
-            return result["decoded_url"]
-        return google_news_link
+            decoded = result["decoded_url"]
     except Exception as e:
         print(f"⚠️ 원본 링크 디코딩 중 문제 발생: {e}")
-        return google_news_link
+
+    # [수정] gnewsdecoder가 실패했거나(예외/status False) 여전히 구글 도메인 URL을 돌려준 경우,
+    # 실제 HTTP 리다이렉트를 직접 따라가서 언론사 URL을 얻는 것을 한 번 더 시도한다.
+    # (구글 뉴스는 종종 JS 리다이렉트 없이 순수 HTTP 302로도 실제 기사로 넘어가는 경우가 있어서
+    # gnewsdecoder 실패 시에도 이 방법으로 풀리는 경우가 많다.)
+    if "google.com" in decoded:
+        try:
+            resp = requests.get(google_news_link, headers=HEADERS, timeout=10, allow_redirects=True)
+            if "google.com" not in resp.url:
+                decoded = resp.url
+        except Exception as e:
+            print(f"⚠️ 리다이렉트 추적을 통한 링크 해석도 실패: {e}")
+
+    return decoded
 
 # 다음뉴스 등에서 실제 기사 이미지 대신 나오는 사이트 기본 로고/플레이스홀더/광고 이미지를 걸러내기 위한 키워드
 IMAGE_BLOCKLIST_KEYWORDS = [
