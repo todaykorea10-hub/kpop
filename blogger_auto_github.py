@@ -169,6 +169,10 @@ IMAGE_BLOCKLIST_KEYWORDS = [
     'kakao_default', 'og_default', 'common/img', 'daumcdn.net/thumb/S95x64',
     'placeholder', 'icon', 'sprite', 'banner', 'button', '/ad/', 'ad_',
     'nav_', 'header_', 'footer_', 'gnb_', 'btn_',
+    # [수정] 구글 뉴스 리다이렉트가 실제 언론사 URL로 안 풀리고 구글 자체 페이지(또는 동의 확인
+    # 페이지)에 머문 상태로 이미지를 추출하면, 그 페이지의 구글 공용 썸네일(lh3.googleusercontent.com 등)이
+    # 잡혀서 서로 완전히 다른 기사에 전부 같은 이미지가 붙는 문제가 있었다. 구글 도메인 자체를 차단한다.
+    'googleusercontent.com', 'gstatic.com', 'news.google.com', 'google.com/favicon',
 ]
 
 def is_blocked_image(url):
@@ -193,6 +197,14 @@ def is_too_small(img_tag, min_size=150):
 def extract_news_image(news_link):
     try:
         final_link = resolve_google_news_link(news_link)
+
+        # [수정] 디코딩이 실패해서 여전히 구글 도메인(news.google.com, 동의 확인 페이지 등)에
+        # 머물러 있으면, 그 페이지를 긁어봤자 구글 공용 썸네일만 나오므로 아예 시도하지 않는다.
+        # 이게 바로 서로 다른 기사(사나/해린/배드민턴 선수 등)에 전부 같은 이미지가 붙었던 원인이다.
+        if "google.com" in final_link:
+            print("   ↪️ 원본 링크 해석이 안 풀려서(여전히 구글 페이지) 이미지 추출을 건너뜁니다.")
+            return None
+
         response = requests.get(final_link, headers=HEADERS, timeout=10)
         soup = BeautifulSoup(response.text, 'html.parser')
 
@@ -224,7 +236,7 @@ def extract_news_image(news_link):
 
         # 전부 블록리스트에 걸렸거나 후보가 아예 없는 경우 (사이트 기본 로고만 있거나, 이미지 자체가 없는 페이지)
         if candidates:
-            print(f"   ↪️ 후보 이미지 {len(candidates)}개 모두 로고/아이콘으로 판단되어 제외했습니다. (예: {candidates[0][:80]})")
+            print(f"   ↪️ 후보 이미지 {len(candidates)}개 모두 로고/아이콘/구글 자체 이미지로 판단되어 제외했습니다. (예: {candidates[0][:80]})")
         else:
             print("   ↪️ 이 페이지에서는 이미지 후보 자체를 찾지 못했습니다 (연재/코너 페이지 등일 수 있음).")
         return None
@@ -334,8 +346,8 @@ def sanitize_title(title, max_len=100):
     if not title:
         return title
     replacements = {
-        '\u2018': "'", '\u2019': "'", '\u201c': '"', '\u201d': '"',
-        '\u2026': '...',
+        '‘': "'", '’': "'", '“': '"', '”': '"',
+        '…': '...',
     }
     for old, new in replacements.items():
         title = title.replace(old, new)
